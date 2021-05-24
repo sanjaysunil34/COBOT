@@ -1,22 +1,17 @@
 const Discord = require('discord.js')
 const client = new Discord.Client()
+
 const axios = require('axios')
 const got = require("got");
 require('dotenv').config();
+
 read = require('./read');
+
+const mongo = require('./mongo');
+const userSchema = require('./schemas/user-schema')
 
 const config = require('./config.json')
 const command = require('./command.js')
-
-const low = require('lowdb')
-const FileSync = require('lowdb/adapters/FileSync')
-
-const adapter = new FileSync('db.json')
-const db = low(adapter)
-
-
-db.defaults({ users: [],})  
-.write()
   
 client.on("guildCreate", (guild) => {  ;
     console.log(`Joined new guild: ${guild.name}`);
@@ -56,7 +51,16 @@ client.on("guildCreate", (guild) => {  ;
     }})
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
+
+    await mongo().then(mongoose => {
+        try {
+            console.log('Connected to mongo!');
+        }finally{
+            mongoose.connection.close()
+        }
+    })
+
     console.log('Main script is ready!');
     // client.user.setUsername("Cobot  ");
     client.user.setActivity(`_cobot help`, { type: 'LISTENING'})
@@ -73,7 +77,7 @@ client.on('ready', () => {
     var vdone = false;
     var udone = false;
 
-    command(client, 'cobot register', async (message) => {
+    command(client, 'cobot register' , async (message) => {
         if(uid !== 0){
             message.reply({embed: {
                 color: 	15158332,
@@ -88,7 +92,6 @@ client.on('ready', () => {
             slot=false;
             vdone=true;
             message.reply('Enter your state :   _s <state>')
-
             let filter = m => m.author.id === uid
             message.channel.awaitMessages(filter, {
             max: 1,
@@ -263,7 +266,7 @@ client.on('ready', () => {
                             },
                         },
                     )
-                    .then((response) => {
+                    .then(async (response) => {
                         var arr = response.data;
                         slot = false;
 
@@ -310,15 +313,30 @@ client.on('ready', () => {
                                     }
                             }})
                         }
-                        if(udone == false){
-                            db.get('users')
-                                .push({ discordid: uid, state: state_name, district : district_name, Age : age, stateid : stateid, districtid : districtid, ifslot : slot})
-                                .write()                    
-                        }else{
-                            db.get('users').find({discordid: uid})
-                                .assign({ discordid: uid, state: state_name, district : district_name, Age : age, stateid : stateid, districtid : districtid, ifslot : slot})
-                                .write()
-                        }
+ 
+                            await mongo().then(async (mongoose) => {
+                                try {
+                                    console.log('Hiii');
+                                    await userSchema.findOneAndUpdate(
+                                        {
+                                            discordid: uid,
+                                        }, {
+                                            discordid: uid,
+                                            age : age,
+                                            stateid : stateid,
+                                            districtid : districtid,
+                                        }, {
+                                            upsert: true
+                                        }
+                                    )
+                                } catch (error) {
+                                    console.log('Hi');
+                                    console.log(error);
+                                } finally{
+                                    mongoose.connection.close()
+                                }
+                            })                  
+
                         
                         udone = false;
                         stateid=0;
@@ -352,22 +370,30 @@ client.on('ready', () => {
 
     command(client, 'cobot check', async (message) => {
         var user_uid = message.author.id;
-        var user = db.get('users').find({ discordid: user_uid }).value()
+        var user;
+        await mongo().then(async mongoose => {
+            try{
+                user = await userSchema.findOne({ discordid: user_uid })
+            }finally{
+                mongoose.connection.close()
+            }
+        })
         const moment = require('moment');
         var created = moment().format('DD/MM/YY');
-        if(user){
+        if(user != null){
+
             console.log(user.districtid);
             console.log(created);
             let res = await axios
                 .get(
-                    `https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/findByDistrict?district_id=${user.districtid}&date=${created}`,
-                    {
-                        headers: {
-                            'User-Agent':
-                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0',
+                        `https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/findByDistrict?district_id=${user.districtid}&date=${created}`,
+                        {
+                            headers: {
+                                'User-Agent':
+                                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:89.0) Gecko/20100101 Firefox/89.0',
+                            },
                         },
-                    },
-                )
+                    )
                 .then((response) => {
                     var arr = response.data;
                     slot = false;
@@ -377,11 +403,13 @@ client.on('ready', () => {
                     {
                         if(arr.sessions[i].available_capacity>0)
                         {
-                            if(arr.sessions[i].min_age_limit <= user.Age){
+                            if(arr.sessions[i].min_age_limit <= user.age){
                                 slot=true;
                             }
                         }
                     }
+
+                    console.log(slot);
 
                     if(slot===true){
                         message.reply({embed: {
@@ -405,6 +433,7 @@ client.on('ready', () => {
                                 }
                         }})
                     }
+
                 }).catch((error) => {
                         console.log("Hi");
                         console.log(error);
@@ -426,12 +455,20 @@ client.on('ready', () => {
     command(client, 'cobot update', async (message) => {
         uid = message.author.id;
         //registered
-        var user = db.get('users').find({ discordid: uid }).value()
+        var user;
+        await mongo().then(async mongoose => {
+            try{
+                user = await userSchema.findOne({ discordid: uid })
+            }finally{
+                mongoose.connection.close()
+            }
+        })
+        
 
         if(user !== undefined){
+            console.log(user);
             udone = true;
             message.reply('Enter your state as : _s <state>')
-
             let filter = m => m.author.id === uid
             message.channel.awaitMessages(filter, {
             max: 1,
@@ -467,34 +504,36 @@ client.on('ready', () => {
 
     command(client, 'cobot delete', async (message) => {
         var user_uid = message.author.id;
-        var user = db.get('users').find({ discordid: user_uid }).value()
-
-        if(user !== undefined){
-            db.get('users')
-            .remove({discordid : user_uid})
-            .write()
-            message.reply({embed: {
-                color: 	3066993,
-                description : `<@${message.author.id}>, Your registration has been closed. \n \nHope you get vaccinated soon !`,
-                timestamp: new Date(),
-                footer: {
-                    icon_url: 'https://i.imgur.com/nnKLeNU.png',
-                    text: "©"
+        var user;
+        await mongo().then(async mongoose => {
+            try{
+                
+                user = await userSchema.findOneAndDelete({ discordid: user_uid })
+                if(user){
+                    message.reply({embed: {
+                    color: 	3066993,
+                    description : `<@${message.author.id}>, Your registration has been closed. \n \nHope you get vaccinated soon !`,
+                    timestamp: new Date(),
+                    footer: {
+                        icon_url: 'https://i.imgur.com/nnKLeNU.png',
+                        text: "©"
+                    }}})
+                }else{
+                    message.reply({embed: {
+                    color: 	15158332,
+                    description : `<@${message.author.id}>, You have not yet registered !`,
+                    timestamp: new Date(),
+                    footer: {
+                        icon_url: 'https://i.imgur.com/nnKLeNU.png',
+                        text: "©"
+                    }}})
                 }
-            }})
-            console.log("Registration Closing Successful !")
-            user_uid = 0;
-        }else{
-            message.reply({embed: {
-                color: 	15158332,
-                description : `<@${message.author.id}>, You have not yet registered !`,
-                timestamp: new Date(),
-                footer: {
-                    icon_url: 'https://i.imgur.com/nnKLeNU.png',
-                    text: "©"
-                    }
-            }})
-        }
+                console.log("Registration Closing Successful !")
+                user_uid = 0;
+            }finally{
+                mongoose.connection.close()
+            }
+        })
     })
 
     command(client, 'cobot exit', async (message) => {
@@ -532,10 +571,20 @@ client.on('ready', () => {
 
     command(client, 'cobot help', async (message) => {
         uidhelp = message.author.id;
-        var user = db.get('users').find({ discordid: uidhelp }).value()
+        var user;
+        await mongo().then(async mongoose => {
+            try{
+                user = await userSchema.findOne({ discordid: uidhelp })
+            }finally{
+                mongoose.connection.close()
+            }
+        })
         var f1;
         if(user == undefined){
             f1 = false;
+        }
+        else{
+            f1 = true;
         }
         if(f1 == false){
             message.reply({embed: {
@@ -556,6 +605,8 @@ client.on('ready', () => {
                     // { name: "_a", value: "To enter your age", inline: true},
                     { name: "_cobot check", value: "To check your vaccine availability", inline: false},
                     { name: "_cobot update", value: "Update your existing location and age group", inline: false},
+                    { name: "_cobot mute", value: "Mute your hourly vaccine availability updates", inline: false},
+                    { name: "_cobot unmute", value: "Unmute your hourly vaccine availability updates", inline: false},
                     { name: "_cobot exit", value: "Exit your registration", inline: false},
                     { name: "_cobot cowin", value: "To visit cowin website", inline: false},
                     { name: "_cobot delete", value: "Close your registration for vaccine availability checking", inline: false},
@@ -585,6 +636,8 @@ client.on('ready', () => {
                     // { name: "_a", value: "To enter your age", inline: true},
                     { name: "_cobot check", value: "To check your vaccine availability", inline: false},
                     { name: "_cobot update", value: "Update your existing location and age group", inline: false},
+                    { name: "_cobot mute", value: "Mute your hourly vaccine availability updates", inline: false},
+                    { name: "_cobot unmute", value: "Unmute your hourly vaccine availability updates", inline: false},
                     { name: "_cobot exit", value: "Exit your registration", inline: false},
                     { name: "_cobot cowin", value: "To visit cowin website", inline: false},
                     { name: "_cobot delete", value: "Close your registration for vaccine availability checking", inline: false},
@@ -597,7 +650,112 @@ client.on('ready', () => {
             }})
         }
     })
+
+    var mute = false;
+    var mute_id = 0;
+
+    command(client, 'cobot mute', async (message) => {
+        if(mute_id == 0){
+            user_uid = message.author.id;
+            await mongo().then(async mongoose => {
+                try{
+                    user = await userSchema.findOne({ discordid: user_uid })
+                }finally{
+                    mongoose.connection.close()
+                }
+            })
+            if(user != null){
+                message.reply("Enter hours to be muted as :  _m <hours>")
+                mute=true;
+                mute_id = user_uid;
+                let filter = m => m.author.id === user_uid
+                message.channel.awaitMessages(filter, {
+                max: 1,
+                time: 30000,
+                errors: ['time']
+                })
+                .then(() => {
+                console.log('Hi');
+                })
+                .catch(() => {
+                    message.reply('Your registration has timed out');
+                    uid=0;
+                    stateid=0;
+                    districtid=0;
+                    age=0;
+                    slot;
+                    slot=false;
+                    vdone = false;
+                    udone = false;
+                    mute=false;
+                    mute_id=0;
+                });
+            }else{
+                message.reply({embed: {
+                    color: 	15158332,
+                    description : `<@${message.author.id}>, You have not yet registered !`,
+                    timestamp: new Date(),
+                    footer: {
+                        icon_url: 'https://i.imgur.com/nnKLeNU.png',
+                        text: "©"
+                    }
+                }})
+            }
+        }else{
+            message.reply({embed: {
+                color: 	15158332,
+                description : `<@${message.author.id}>, another user is already working.Please wait!`,
+            }})
+        }
+        
+    })
+
+    command(client, 'm', async (message) => {
+        user_uid = message.author.id;
+        if(user_uid == mute_id){
+            hrs = message.content.substring(3);
+            var user;
+            await mongo().then(async mongoose => {
+                try{
+                    user = await userSchema.findOneAndUpdate({ discordid: user_uid },{ $set: { mute: hrs } })
+                }finally{
+                    mongoose.connection.close()
+                }
+            })
+
+            message.reply({embed: {
+                color: 	15158332,
+                description : `<@${message.author.id}>, Cobot has been successfully muted for ${hrs} hours.`,
+            }})
+        
+
+        }else{
+            message.reply({embed: {
+                color: 	15158332,
+                description : `<@${message.author.id}>, another user is already working.Please wait!`,
+            }})
+        }
+        
+
+    })
+
+    command(client, 'cobot unmute', async (message) => {
+        user_uid = message.author.id;
+        var user;
+            await mongo().then(async mongoose => {
+                try{
+                    user = await userSchema.findOneAndUpdate({ discordid: user_uid },{ $set: { mute: 0 } })
+                }finally{
+                    mongoose.connection.close()
+                }
+            })
+            message.reply({embed: {
+                color: 	15158332,
+                description : `<@${message.author.id}>, Cobot has been successfully unmuted.`,
+            }})
+    })
+
+
 })
 
 client.login(process.env.TOKEN)
-
